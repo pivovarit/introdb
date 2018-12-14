@@ -13,7 +13,9 @@ public class ObjectPool<T> {
     private final int maxPoolSize;
 
     private final ArrayBlockingQueue<T> freePool;
-    private final AtomicInteger nextIndex = new AtomicInteger(0);
+    private final ArrayBlockingQueue<CompletableFuture<T>> requests = new ArrayBlockingQueue<>(1024);
+
+    private final AtomicInteger poolSize = new AtomicInteger(0);
 
     public ObjectPool(ObjectFactory<T> fcty, ObjectValidator<T> validator) {
         this(fcty, validator, 25);
@@ -30,18 +32,18 @@ public class ObjectPool<T> {
         T obj;
         if (null != (obj = freePool.poll())) { // if there's a free object waiting, return
             return completedFuture(obj);
-        } else if (nextIndex.get() == maxPoolSize) { // if pool saturated, wait
-            return spinWaitAsync();
+        } else if (poolSize.get() == maxPoolSize) { // if pool saturated, return in
+            return uncompletedRequest();
         } else { // spawn new object
             int claimed;
             int next;
             do {
-                claimed = nextIndex.get();
+                claimed = poolSize.get();
                 next = claimed + 1;
                 if (next > maxPoolSize) { // when competing thread reached max first, wait
-                    return spinWaitAsync();
+                    return uncompletedRequest();
                 }
-            } while (!nextIndex.compareAndSet(claimed, next));
+            } while (!poolSize.compareAndSet(claimed, next));
 
             T object = fcty.create();
             if (next == maxPoolSize) { // if pool initialized, factory not needed
@@ -56,29 +58,28 @@ public class ObjectPool<T> {
         if (!validator.validate(object)) {
             throw new IllegalStateException("Object is still in use!");
         }
-        freePool.offer(object);
+        var request = requests.poll();
+        if (request != null) {
+            request.complete(object);
+        } else {
+            freePool.offer(object);
+        }
     }
 
     public void shutdown() throws InterruptedException {
     }
 
     public int getPoolSize() {
-        return nextIndex.get();
+        return poolSize.get();
     }
 
     public int getInUse() {
-        return nextIndex.get() - freePool.size();
+        return poolSize.get() - freePool.size();
     }
 
-    private CompletableFuture<T> spinWaitAsync() {
-        return CompletableFuture.supplyAsync(() -> {
-            T obj;
-
-            while (null == (obj = freePool.poll())) {
-                Thread.onSpinWait();
-            }
-
-            return obj;
-        });
+    private CompletableFuture<T> uncompletedRequest() {
+        var req = new CompletableFuture<T>();
+        requests.add(req);
+        return req;
     }
 }
