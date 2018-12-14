@@ -103,7 +103,7 @@ class UnorderedHeapFile implements Store, Iterable<Record> {
             return null;
     }
 
-    private void writePage(ByteBuffer page, int pageNr) throws IOException {
+    private synchronized void writePage(ByteBuffer page, int pageNr) throws IOException {
         int position = page.position();
         page.rewind();
         file.write(page, pageNr * pageSize);
@@ -111,7 +111,7 @@ class UnorderedHeapFile implements Store, Iterable<Record> {
         pagecache.remove(pageNr);
     }
 
-    private int readPage(ByteBuffer page, int pageNr) {
+    private synchronized int readPage(ByteBuffer page, int pageNr) {
 
         clearPage(page);
         if (pagecache.get(page, pageNr) != -1) {
