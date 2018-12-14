@@ -30,17 +30,35 @@ public class ObjectPool<T> {
 
     public CompletableFuture<T> borrowObject() {
         T obj;
-        if (null != (obj = freePool.poll())) { // if available, return
+        if (null != (obj = freePool.poll()) && validator.validate(obj)) { // if available, return
             return completedFuture(obj);
         }
 
-        return nextIndex.get() == maxPoolSize
-          ? spinWaitAsync()
-          : completedFuture(initializeLockFreeLazily());
+        if (nextIndex.get() == maxPoolSize) {
+            return spinWaitAsync();
+        }
+
+        int claimed;
+        int next;
+        do {
+            claimed = nextIndex.get();
+            next = claimed + 1;
+            if (next > maxPoolSize) {
+                return spinWaitAsync();
+            }
+        } while (!nextIndex.compareAndSet(claimed, next));
+
+        T object = fcty.create();
+        pool[claimed] = object;
+        if (next == maxPoolSize) {
+            fcty = null;
+        }
+
+        return completedFuture(object);
     }
 
     public void returnObject(T object) {
-        freePool.add(object);
+        freePool.offer(object);
     }
 
     public void shutdown() throws InterruptedException {
@@ -64,29 +82,13 @@ public class ObjectPool<T> {
 
     private CompletableFuture<T> spinWaitAsync() {
         return CompletableFuture.supplyAsync(() -> {
-            T object;
+            T obj;
 
-            while (null == (object = freePool.poll())) {
+            while (null == (obj = freePool.poll()) || !validator.validate(obj)) {
                 Thread.onSpinWait();
             }
 
-            return object;
+            return obj;
         });
-    }
-
-    private T initializeLockFreeLazily() {
-        int claimed;
-        int next;
-        do {
-            claimed = nextIndex.get();
-            next = claimed + 1;
-        } while (!nextIndex.compareAndSet(claimed, next));
-
-        T object = fcty.create();
-        pool[claimed] = object;
-        if (next == maxPoolSize) {
-            fcty = null;
-        }
-        return object;
     }
 }
