@@ -63,15 +63,12 @@ public class ObjectPool<T> {
     }
 
     public void returnObject(T object) {
-        if (validator.validate(object)) {
-            var request = requests.poll();
-            if (request != null) {
-                request.complete(object);
-            } else {
-                freePool.offer(object);
-            }
+        T objectToAdd = validator.validate(object) ? object : fcty.create();
+        var request = requests.poll();
+        if (request != null) {
+            request.complete(objectToAdd);
         } else {
-            freePool.offer(fcty.create());
+            freePool.offer(objectToAdd);
         }
     }
 
