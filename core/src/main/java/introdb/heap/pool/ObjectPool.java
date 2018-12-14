@@ -12,7 +12,6 @@ public class ObjectPool<T> {
     private final ObjectValidator<T> validator;
     private final int maxPoolSize;
 
-    private final T[] pool; // TODO unneeded?
     private final ArrayBlockingQueue<T> freePool;
     private final AtomicInteger nextIndex = new AtomicInteger(0);
 
@@ -24,13 +23,12 @@ public class ObjectPool<T> {
         this.fcty = fcty;
         this.validator = validator;
         this.maxPoolSize = maxPoolSize;
-        this.pool = (T[]) new Object[maxPoolSize];
         this.freePool = new ArrayBlockingQueue<>(maxPoolSize);
     }
 
     public CompletableFuture<T> borrowObject() {
         T obj;
-        if (null != (obj = freePool.poll()) && validator.validate(obj)) { // if available, return
+        if (null != (obj = freePool.poll())) {
             return completedFuture(obj);
         }
 
@@ -49,7 +47,6 @@ public class ObjectPool<T> {
         } while (!nextIndex.compareAndSet(claimed, next));
 
         T object = fcty.create();
-        pool[claimed] = object;
         if (next == maxPoolSize) {
             fcty = null;
         }
@@ -58,6 +55,9 @@ public class ObjectPool<T> {
     }
 
     public void returnObject(T object) {
+        while (!validator.validate(object)) {
+            Thread.onSpinWait();
+        }
         freePool.offer(object);
     }
 
@@ -68,23 +68,15 @@ public class ObjectPool<T> {
         return nextIndex.get();
     }
 
-    public int getInUse() { // TODO replace with? return nextIndex.get() - freePool.size();
-        int count = 0;
-        int bound = nextIndex.get();
-        for (int i = 0; i < bound; i++) {
-            T t = pool[i];
-            if (validator.validate(t)) {
-                count++;
-            }
-        }
-        return count;
+    public int getInUse() {
+        return nextIndex.get() - freePool.size();
     }
 
     private CompletableFuture<T> spinWaitAsync() {
         return CompletableFuture.supplyAsync(() -> {
             T obj;
 
-            while (null == (obj = freePool.poll()) || !validator.validate(obj)) {
+            while (null == (obj = freePool.poll())) {
                 Thread.onSpinWait();
             }
 
