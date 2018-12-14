@@ -28,31 +28,28 @@ public class ObjectPool<T> {
 
     public CompletableFuture<T> borrowObject() {
         T obj;
-        if (null != (obj = freePool.poll())) { // if there's a free object, return
+        if (null != (obj = freePool.poll())) { // if there's a free object waiting, return
             return completedFuture(obj);
-        }
-
-        if (nextIndex.get() == maxPoolSize) { // if pool saturated, wait async
+        } else if (nextIndex.get() == maxPoolSize) { // if pool saturated, wait
             return spinWaitAsync();
-        }
+        } else { // spawn new object
+            int claimed;
+            int next;
+            do {
+                claimed = nextIndex.get();
+                next = claimed + 1;
+                if (next > maxPoolSize) { // when competing thread reached max first, wait
+                    return spinWaitAsync();
+                }
+            } while (!nextIndex.compareAndSet(claimed, next));
 
-        // spawn new object
-        int claimed;
-        int next;
-        do {
-            claimed = nextIndex.get();
-            next = claimed + 1;
-            if (next > maxPoolSize) { // when competing thread reached max first, wait
-                return spinWaitAsync();
+            T object = fcty.create();
+            if (next == maxPoolSize) { // if pool initialized, factory not needed
+                fcty = null;
             }
-        } while (!nextIndex.compareAndSet(claimed, next));
 
-        T object = fcty.create();
-        if (next == maxPoolSize) { // if pool initialized, factory not needed
-            fcty = null;
+            return completedFuture(object);
         }
-
-        return completedFuture(object);
     }
 
     public void returnObject(T object) {
