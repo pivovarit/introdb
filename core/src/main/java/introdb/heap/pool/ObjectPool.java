@@ -8,7 +8,7 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 
 public class ObjectPool<T> {
 
-    private ObjectFactory<T> fcty;
+    private final ObjectFactory<T> fcty;
     private final ObjectValidator<T> validator;
     private final int maxPoolSize;
 
@@ -46,23 +46,21 @@ public class ObjectPool<T> {
             } while (!poolSize.compareAndSet(claimed, next));
 
             T object = fcty.create();
-            if (next == maxPoolSize) { // if pool initialized, factory not needed
-                fcty = null;
-            }
 
             return completedFuture(object);
         }
     }
 
     public void returnObject(T object) {
-        if (!validator.validate(object)) {
-            throw new IllegalStateException("Object is still in use!");
-        }
-        var request = requests.poll();
-        if (request != null) {
-            request.complete(object);
+        if (validator.validate(object)) {
+            var request = requests.poll();
+            if (request != null) {
+                request.complete(object);
+            } else {
+                freePool.offer(object);
+            }
         } else {
-            freePool.offer(object);
+            freePool.offer(fcty.create());
         }
     }
 
