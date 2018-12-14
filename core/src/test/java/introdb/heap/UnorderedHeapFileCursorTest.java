@@ -41,7 +41,7 @@ class UnorderedHeapFileCursorTest {
 
     @ParameterizedTest
     @ValueSource(ints = {512,2048})
-    void iterate_over_records(int valueSize) throws IOException {
+    void iterate_over_records(int valueSize) throws IOException, ClassNotFoundException {
         // given
         var firstkey = "1";
         var firstvalue = putRandomValue(firstkey, valueSize);
@@ -75,7 +75,7 @@ class UnorderedHeapFileCursorTest {
 
     }
 
-    private byte[] putRandomValue(String key, int valueSize) throws IOException {
+    private byte[] putRandomValue(String key, int valueSize) throws IOException, ClassNotFoundException {
         var value = new byte[valueSize];
         new Random().nextBytes(value);
         heapFile.put(newEntry(key, value));
@@ -85,4 +85,5 @@ class UnorderedHeapFileCursorTest {
     private Entry newEntry(Serializable firstkey, Serializable firstvalue) {
         return new Entry(firstkey, firstvalue);
     }
+
 }

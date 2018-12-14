@@ -1,8 +1,5 @@
 package introdb.heap;
 
-import introdb.heap.Record.Mark;
-import introdb.heap.pool.ObjectPool;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOError;
@@ -13,97 +10,152 @@ import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import static java.nio.file.StandardOpenOption.CREATE;
-import static java.nio.file.StandardOpenOption.READ;
-import static java.nio.file.StandardOpenOption.WRITE;
+import introdb.heap.Record.Mark;
 
 class UnorderedHeapFile implements Store, Iterable<Record> {
 
-    private static final ThreadLocal<ByteBuffer> T_LOCAL_BUFFER = ThreadLocal
-      .withInitial(() -> ByteBuffer.allocate(4 * 1024));
+    private static final ThreadLocal<ByteBuffer> T_LOCAL_BUFFER = ThreadLocal.withInitial(() -> ByteBuffer.allocate(4 * 1024));
 
     private final PageCache pagecache;
     private final int maxNrPages;
     private final int pageSize;
 
     private final byte[] zeroPage;
-    private volatile ByteBuffer lastPage;
-    private final AtomicInteger lastPageNumber = new AtomicInteger(-1);
+    private ByteBuffer lastPage;
+    private int lastPageNumber=-1;
 
     private final FileChannel file;
 
-    private final ObjectPool<ReentrantReadWriteLock> locks = new ObjectPool<>(ReentrantReadWriteLock::new, l -> !l.hasQueuedThreads());
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     UnorderedHeapFile(Path path, int maxNrPages, int pageSize) throws IOException {
-        this.file = FileChannel.open(path, Set.of(CREATE, READ, WRITE));
-        this.pagecache = new PageCache(maxNrPages, pageSize);
+        this.file = FileChannel.open(path,
+          Set.of(StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE));
+        this.pagecache = new PageCache(maxNrPages,pageSize);
         this.maxNrPages = maxNrPages;
         this.pageSize = pageSize;
         this.zeroPage = new byte[pageSize];
     }
 
     @Override
-    public synchronized void put(Entry entry) throws IOException {
-            assertTooManyPages();
+    public void put(Entry entry) throws IOException {
 
-            var newRecord = Record.of(entry);
+        assertTooManyPages();
 
-            assertRecordSize(newRecord);
+        var newRecord = Record.of(entry);
+        assertRecordSize(newRecord);
 
-            var iterator = cursor();
-            while (iterator.hasNext()) {
-                var record = iterator.next();
-                if (Arrays.equals(newRecord.key(), record.key())) {
-                    iterator.remove();
-                    break;
+        var iterator = cursor();
+
+        lock.writeLock().lock();
+        try {
+            var found = false;
+
+            lock.readLock().lock();
+            try {
+                while (iterator.hasNext()) {
+                    var record = iterator.next();
+                    if (Arrays.equals(newRecord.key(), record.key())) {
+                        found = true;
+                        break;
+                    }
                 }
+            } finally {
+                lock.readLock().unlock();
             }
+
+            if (found) {
+                iterator.remove();
+            }
+
             if (lastPage == null || lastPage.remaining() < newRecord.size()) {
-                lastPageNumber.getAndIncrement();
                 lastPage = ByteBuffer.allocate(pageSize);
+                lastPageNumber++;
             }
 
             var src = newRecord.write(() -> lastPage);
-            writePage(src, lastPageNumber.get());
+            writePage(src, lastPageNumber);
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     @Override
-    public synchronized Object get(Serializable key) throws IOException, ClassNotFoundException { // TODO bo trzeba było dowiezc
-        var keySer = serializeKey(key);
+    public Object get(Serializable key) throws IOException, ClassNotFoundException {
 
-            var iterator = cursor();
+        // serialize key
+        var keySer = serializeKey(key);
+        var iterator = cursor();
+
+        lock.writeLock().lock();
+
+        try {
             while (iterator.hasNext()) {
                 var record = iterator.next();
                 if (Arrays.equals(keySer, record.key())) {
                     return deserializeValue(record.value());
                 }
             }
-            return null;
+        } finally {
+            lock.writeLock().unlock();
+        }
+
+        return null;
     }
 
-    public synchronized Object remove(Serializable key) throws IOException, ClassNotFoundException {
+    public Object remove(Serializable key) throws IOException, ClassNotFoundException {
+        // serialize key
         var keySer = serializeKey(key);
+        var iterator = cursor();
 
-            var iterator = cursor();
-            while (iterator.hasNext()) {
-                var record = iterator.next();
-                if (Arrays.equals(keySer, record.key())) {
-                    var value = deserializeValue(record.value());
-                    iterator.remove();
-                    return value;
+        boolean found = false;
+        byte[] value = null;
+
+        lock.writeLock().lock();
+        try {
+
+            Record record = null;
+
+            // downgrade lock
+            lock.readLock().lock();
+            try {
+                while (iterator.hasNext()) {
+                    record = iterator.next();
+                    if (Arrays.equals(keySer, record.key())) {
+                        found = true;
+                        break;
+                    }
                 }
+            } finally {
+                lock.readLock().unlock();
             }
-            return null;
+
+            if (found) {
+                value = record.value();
+                iterator.remove();
+            }
+
+        } finally {
+            lock.writeLock().unlock();
+        }
+
+        if(value!=null) {
+            return deserializeValue(value);
+        }
+
+        return null;
+
     }
 
-    private synchronized void writePage(ByteBuffer page, int pageNr) throws IOException {
+    private void writePage(ByteBuffer page, int pageNr) throws IOException {
         int position = page.position();
         page.rewind();
         file.write(page, pageNr * pageSize);
@@ -111,16 +163,16 @@ class UnorderedHeapFile implements Store, Iterable<Record> {
         pagecache.remove(pageNr);
     }
 
-    private synchronized int readPage(ByteBuffer page, int pageNr) {
+    private int readPage(ByteBuffer page, int pageNr) {
 
         clearPage(page);
-        if (pagecache.get(page, pageNr) != -1) {
+        if(pagecache.get(page, pageNr)!=-1) {
             return pageSize;
         }
         try {
             var bytesRead = file.read(page, pageNr * pageSize);
-            if (bytesRead != -1) {
-                pagecache.put(page, pageNr);
+            if(bytesRead!=-1) {
+                pagecache.put(page,pageNr);
             }
             return bytesRead;
         } catch (IOException e) {
@@ -130,30 +182,32 @@ class UnorderedHeapFile implements Store, Iterable<Record> {
 
     private void assertRecordSize(Record newRecord) {
         if (newRecord.size() > pageSize) {
-            throw new IllegalArgumentException("entry too big");
+            throw new IllegalArgumentException("entry to big");
         }
     }
 
     private void assertTooManyPages() {
-        if (lastPageNumber.get() >= maxNrPages) {
-            throw new RuntimeException("Too many pages!");
+        if(lastPageNumber>=maxNrPages) {
+            throw new TooManyPages();
         }
     }
 
     private static Object deserializeValue(byte[] value) throws IOException, ClassNotFoundException {
-        var inputStream = new ByteArrayInputStream(value);
+        try (var inputStream = new ByteArrayInputStream(value)) {
 
-        try (var objectInput = new ObjectInputStream(inputStream)) {
-            return objectInput.readObject();
+            try (var objectInput = new ObjectInputStream(inputStream)) {
+                return objectInput.readObject();
+            }
         }
     }
 
     private static byte[] serializeKey(Serializable key) throws IOException {
-        var byteArray = new ByteArrayOutputStream();
-        try (var objectOutput = new ObjectOutputStream(byteArray)) {
-            objectOutput.writeObject(key);
+        try (var byteArray = new ByteArrayOutputStream()) {
+            try (var objectOutput = new ObjectOutputStream(byteArray)) {
+                objectOutput.writeObject(key);
+            }
+            return byteArray.toByteArray();
         }
-        return byteArray.toByteArray();
     }
 
     private void clearPage(ByteBuffer page) {
@@ -179,7 +233,7 @@ class UnorderedHeapFile implements Store, Iterable<Record> {
         public boolean hasNext() {
             if (!hasNext) {
                 inPagePosition = -1;
-                do {
+                do{
                     if (page == null) {
                         page = zeroPage();
                         var bytesRead = readPage(page, pageNr);
@@ -202,34 +256,42 @@ class UnorderedHeapFile implements Store, Iterable<Record> {
 
                     page = null;
                     pageNr++;
-                } while (true);
+
+                } while(true);
             }
             return true;
         }
 
+
         @Override
         public Record next() {
-                if (hasNext || hasNext()) {
-                    hasNext = false;
-                    inPagePosition = page.position() - 1;
-                    return record();
-                }
-                throw new NoSuchElementException();
+            if (hasNext || hasNext()) {
+                hasNext = false;
+                inPagePosition = page.position()-1;
+                return record();
+            }
+            throw new NoSuchElementException();
         }
 
         @Override
         public void remove() {
-                if (inPagePosition < 0) {
-                    throw new IllegalStateException("next() method has not yet been called, or the remove() method has already been called");
-                }
-                page.put(inPagePosition, Mark.REMOVED.mark());
-                try {
-                    writePage(page, pageNr);
-                    lastPage = null; //force page refresh
-                    inPagePosition = -1;
-                } catch (IOException e) {
-                    throw new IOError(e);
-                }
+            if(inPagePosition<0) {
+                throw new IllegalStateException("next() method has not yet been called, or the remove() method has already been called");
+            }
+            page.put(inPagePosition, Mark.REMOVED.mark());
+            try {
+                writePage(page, pageNr);
+                //force page refresh
+                lastPage = null;
+                inPagePosition = -1;
+            } catch (IOException e) {
+                throw new IOError(e);
+            }
+        }
+
+
+        Optional<ByteBuffer> page() {
+            return Optional.ofNullable(page);
         }
 
         private Record record() {
@@ -239,6 +301,11 @@ class UnorderedHeapFile implements Store, Iterable<Record> {
         private void skip() {
             Record.skip(() -> page);
         }
+
+    }
+
+    Cursor cursor() {
+        return new Cursor();
     }
 
     @Override
@@ -246,7 +313,4 @@ class UnorderedHeapFile implements Store, Iterable<Record> {
         return cursor();
     }
 
-    Cursor cursor() {
-        return new Cursor();
-    }
 }
