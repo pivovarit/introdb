@@ -55,8 +55,8 @@ public class ObjectPool<T> {
     }
 
     public void returnObject(T object) {
-        while (!validator.validate(object)) {
-            Thread.onSpinWait();
+        if (!validator.validate(object)) {
+            throw new IllegalStateException("Object is still in use!");
         }
         freePool.offer(object);
     }
