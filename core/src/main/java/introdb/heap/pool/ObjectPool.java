@@ -6,6 +6,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
 
+/*
+    2.9 GHz Intel Core i7
+        Total Number of Cores:	4
+        L2 Cache (per Core):	256 KB
+        L3 Cache:	8 MB
+    16 GB 2133 MHz LPDDR3
+    APPLE SSD SM0512L
+
+    Benchmark                      Mode  Cnt        Score        Error  Units
+    ObjectPoolBenchmark.testPool  thrpt    5  7078629.972 ? 415300.701  ops/s
+ */
 public class ObjectPool<T> {
 
     private final ObjectFactory<T> fcty;
