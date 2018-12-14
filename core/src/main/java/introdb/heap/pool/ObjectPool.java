@@ -12,7 +12,7 @@ public class ObjectPool<T> {
     private final ObjectValidator<T> validator;
     private final int maxPoolSize;
 
-    private final T[] pool;
+    private final T[] pool; // TODO unneeded?
     private final ArrayBlockingQueue<T> freePool;
     private final AtomicInteger nextIndex = new AtomicInteger(0);
 
@@ -68,7 +68,7 @@ public class ObjectPool<T> {
         return nextIndex.get();
     }
 
-    public int getInUse() {
+    public int getInUse() { // TODO replace with? return nextIndex.get() - freePool.size();
         int count = 0;
         int bound = nextIndex.get();
         for (int i = 0; i < bound; i++) {
