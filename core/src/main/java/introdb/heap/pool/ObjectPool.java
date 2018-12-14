@@ -1,7 +1,7 @@
 package introdb.heap.pool;
 
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
@@ -12,7 +12,9 @@ public class ObjectPool<T> {
     private final ObjectValidator<T> validator;
     private final int maxPoolSize;
 
-    private final ArrayBlockingQueue<T> freePool;
+    private final ConcurrentLinkedQueue<T> freePool = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<CompletableFuture<T>> requests = new ConcurrentLinkedQueue<>();
+
     private final AtomicInteger nextIndex = new AtomicInteger(0);
 
     public ObjectPool(ObjectFactory<T> fcty, ObjectValidator<T> validator) {
@@ -23,15 +25,14 @@ public class ObjectPool<T> {
         this.fcty = fcty;
         this.validator = validator;
         this.maxPoolSize = maxPoolSize;
-        this.freePool = new ArrayBlockingQueue<>(maxPoolSize);
     }
 
     public CompletableFuture<T> borrowObject() {
         T obj;
         if (null != (obj = freePool.poll())) { // if there's a free object waiting, return
             return completedFuture(obj);
-        } else if (nextIndex.get() == maxPoolSize) { // if pool saturated, wait
-            return spinWaitAsync();
+        } else if (nextIndex.get() == maxPoolSize) { // if pool saturated, return in
+            return uncompletedRequest();
         } else { // spawn new object
             int claimed;
             int next;
@@ -39,7 +40,7 @@ public class ObjectPool<T> {
                 claimed = nextIndex.get();
                 next = claimed + 1;
                 if (next > maxPoolSize) { // when competing thread reached max first, wait
-                    return spinWaitAsync();
+                    return uncompletedRequest();
                 }
             } while (!nextIndex.compareAndSet(claimed, next));
 
@@ -56,7 +57,12 @@ public class ObjectPool<T> {
         if (!validator.validate(object)) {
             throw new IllegalStateException("Object is still in use!");
         }
-        freePool.offer(object);
+        var request = requests.poll();
+        if (request != null) {
+            request.complete(object);
+        } else {
+            freePool.offer(object);
+        }
     }
 
     public void shutdown() throws InterruptedException {
@@ -70,15 +76,9 @@ public class ObjectPool<T> {
         return nextIndex.get() - freePool.size();
     }
 
-    private CompletableFuture<T> spinWaitAsync() {
-        return CompletableFuture.supplyAsync(() -> {
-            T obj;
-
-            while (null == (obj = freePool.poll())) {
-                Thread.onSpinWait();
-            }
-
-            return obj;
-        });
+    private CompletableFuture<T> uncompletedRequest() {
+        var req = new CompletableFuture<T>();
+        requests.add(req);
+        return req;
     }
 }
