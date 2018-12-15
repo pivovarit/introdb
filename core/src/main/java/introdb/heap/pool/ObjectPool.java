@@ -16,8 +16,8 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
     APPLE SSD SM0512L
 
     Benchmark                                 Mode  Cnt         Score        Error  Units
-    ObjectPoolBenchmark.testPool             thrpt    5  10130575.306 ? 708935.411  ops/s
-    ObjectPoolBenchmark.testPoolUncontended  thrpt    5  19462125.400 ? 331034.302  ops/s
+    ObjectPoolBenchmark.testPool_8_threads   thrpt    5  10130575.306 ? 708935.411  ops/s
+    ObjectPoolBenchmark.testPool_1_thread    thrpt    5  19462125.400 ? 331034.302  ops/s
 
  */
 public class ObjectPool<T> {
