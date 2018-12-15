@@ -13,6 +13,10 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.infra.Blackhole;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 @State(Scope.Benchmark)
 public class ObjectPoolBenchmark {
@@ -31,7 +35,7 @@ public class ObjectPoolBenchmark {
 
 	@Benchmark
 	@Threads(8)
-	public void testPool(Blackhole blackhole) throws InterruptedException, ExecutionException {
+	public void testPool_8_threads(Blackhole blackhole) throws InterruptedException, ExecutionException {
 		CompletableFuture<ReentrantLock> future = pool.borrowObject();
 		ReentrantLock lock = future.get();
 		try {
@@ -39,6 +43,29 @@ public class ObjectPoolBenchmark {
 		} finally {
 			pool.returnObject(lock);
 		}
+	}
+
+	@Benchmark
+	@Threads(1)
+	public void testPool_1_thread(Blackhole blackhole) throws InterruptedException, ExecutionException {
+		CompletableFuture<ReentrantLock> future = pool.borrowObject();
+		ReentrantLock lock = future.get();
+		try {
+			blackhole.consume(lock);
+		} finally {
+			pool.returnObject(lock);
+		}
+	}
+
+	public static void main(String[] args) throws RunnerException {
+		var opt = new OptionsBuilder()
+		.include(ObjectPoolBenchmark.class.getSimpleName())
+		.warmupIterations(5)
+		.measurementIterations(5)
+		.forks(1)
+		.build();
+
+		var result = new Runner(opt).run();
 	}
 
 }
