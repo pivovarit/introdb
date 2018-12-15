@@ -2,6 +2,7 @@ package introdb.heap.pool;
 
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
@@ -14,8 +15,10 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
     16 GB 2133 MHz LPDDR3
     APPLE SSD SM0512L
 
-    Benchmark                      Mode  Cnt        Score        Error  Units
-    ObjectPoolBenchmark.testPool  thrpt   25  7571731.547 ? 251603.234  ops/s
+    Benchmark                                 Mode  Cnt         Score        Error  Units
+    ObjectPoolBenchmark.testPool             thrpt    5  10130575.306 ? 708935.411  ops/s
+    ObjectPoolBenchmark.testPoolUncontended  thrpt    5  19462125.400 ? 331034.302  ops/s
+
  */
 public class ObjectPool<T> {
 
@@ -24,7 +27,7 @@ public class ObjectPool<T> {
     private final int maxPoolSize;
 
     private final ArrayBlockingQueue<T> freePool;
-    private final ArrayBlockingQueue<CompletableFuture<T>> requests = new ArrayBlockingQueue<>(1024);
+    private final ConcurrentLinkedQueue<CompletableFuture<T>> requests = new ConcurrentLinkedQueue<>();
 
     private final AtomicInteger poolSize = new AtomicInteger(0);
 
