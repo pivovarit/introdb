@@ -54,7 +54,7 @@ public class ObjectPool<T> {
             do {
                 claimed = poolSize.get();
                 next = claimed + 1;
-                if (next > maxPoolSize) { // when competing thread reached max first, wait
+                if (next >= maxPoolSize) { // when competing thread reached max first, wait
                     return uncompletedRequest();
                 }
             } while (!poolSize.compareAndSet(claimed, next));

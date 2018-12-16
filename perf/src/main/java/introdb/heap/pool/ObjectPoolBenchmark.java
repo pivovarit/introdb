@@ -34,6 +34,18 @@ public class ObjectPoolBenchmark {
 	}
 
 	@Benchmark
+	@Threads(16)
+	public void testPool_16_threads(Blackhole blackhole) throws InterruptedException, ExecutionException {
+		CompletableFuture<ReentrantLock> future = pool.borrowObject();
+		ReentrantLock lock = future.get();
+		try {
+			blackhole.consume(lock);
+		} finally {
+			pool.returnObject(lock);
+		}
+	}
+
+	@Benchmark
 	@Threads(8)
 	public void testPool_8_threads(Blackhole blackhole) throws InterruptedException, ExecutionException {
 		CompletableFuture<ReentrantLock> future = pool.borrowObject();
