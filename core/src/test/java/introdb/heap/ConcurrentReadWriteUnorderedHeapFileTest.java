@@ -77,6 +77,7 @@ class ConcurrentReadWriteUnorderedHeapFileTest {
 		// wait for readers to complete
 		CompletableFuture.allOf(ws.toArray(new CompletableFuture[0])).get(5,TimeUnit.MINUTES);
 
+		
 		// wait for writers to complete
 		CompletableFuture.allOf(rs.toArray(new CompletableFuture[0])).get(5,TimeUnit.MINUTES);
 		
